@@ -6,7 +6,7 @@ from datetime import date
 st.set_page_config(page_title="Lançamentos", layout="wide")
 st.title("📜 Lançamentos Realizados")
 
-# Flash (mensagens pós-rerun)
+# Flash pós-rerun (opcional; remove se não estiver usando)
 flash = st.session_state.pop("_flash_lanc", None)
 if flash:
     level, msg = flash
@@ -39,13 +39,13 @@ if df.empty:
     st.stop()
 
 # =========================
-# NOVO: Bloco de Filtros
+# Filtros (robusto para Cloud)
 # =========================
 
-# Coluna auxiliar para filtrar validade (sem mexer no texto original)
-df["validade_dt"] = pd.to_datetime(df["validade"], errors="coerce").dt.date
+# Coluna auxiliar em datetime64 (NÃO usar .dt.date aqui)
+df["validade_dt"] = pd.to_datetime(df["validade"], errors="coerce")
 
-# Linha 1 de filtros: Estudo, Produto, Responsável
+# Linha 1: Estudo, Produto, Responsável
 fc1, fc2, fc3 = st.columns(3)
 with fc1:
     f_estudo = st.multiselect(
@@ -63,7 +63,7 @@ with fc3:
         sorted(df["responsavel"].dropna().unique().tolist())
     )
 
-mask = pd.Series(True, index=df.index)
+mask = pd.Series(True, index=df.index, dtype=bool)
 if f_estudo:
     mask &= df["estudo"].isin(f_estudo)
 if f_produto:
@@ -71,13 +71,14 @@ if f_produto:
 if f_resp:
     mask &= df["responsavel"].isin(f_resp)
 
-# Linha 2 de filtros: Validade (intervalo) e incluir sem validade
-min_v = df.loc[mask, "validade_dt"].min()
-max_v = df.loc[mask, "validade_dt"].max()
-default_range = (
-    (min_v if pd.notna(min_v) else date.today()),
-    (max_v if pd.notna(max_v) else date.today()),
-)
+# Linha 2: Validade (intervalo) + incluir sem validade
+min_v = df.loc[mask, "validade_dt"].min(skipna=True)
+max_v = df.loc[mask, "validade_dt"].max(skipna=True)
+
+if pd.isna(min_v) or pd.isna(max_v):
+    default_range = (date.today(), date.today())
+else:
+    default_range = (min_v.date(), max_v.date())
 
 fv1, fv2 = st.columns([2, 1])
 with fv1:
@@ -89,21 +90,24 @@ with fv1:
 with fv2:
     incluir_sem_validade = st.checkbox("Incluir sem validade", value=True)
 
-# Normaliza retorno do date_input
+# Normaliza retorno do date_input e converte para datetime64
 if isinstance(intervalo_validade, (list, tuple)) and len(intervalo_validade) == 2:
     dt_ini, dt_fim = intervalo_validade
 else:
     dt_ini = dt_fim = intervalo_validade
 
-mask_valid = pd.Series(False, index=df.index)
-if dt_ini and dt_fim:
-    mask_valid |= df["validade_dt"].between(dt_ini, dt_fim)
+dt_ini = pd.to_datetime(dt_ini) if dt_ini else None
+dt_fim = pd.to_datetime(dt_fim) if dt_fim else None
+
+mask_valid = pd.Series(False, index=df.index, dtype=bool)
+if dt_ini is not None and dt_fim is not None:
+    mask_valid |= df["validade_dt"].between(dt_ini, dt_fim, inclusive="both")
 if incluir_sem_validade:
     mask_valid |= df["validade_dt"].isna()
 
 mask &= mask_valid
 
-# Filtro de Lote (com base no recorte atual)
+# Lote (com base no recorte atual)
 df_partial = df[mask].copy()
 f_lote = st.multiselect(
     "Filtrar por Lote",
@@ -112,10 +116,9 @@ f_lote = st.multiselect(
 if f_lote:
     mask &= df["lote"].astype(str).isin(f_lote)
 
-# Resultado final dos filtros
+# Resultado dos filtros
 df_view = df[mask].copy()
 
-# Caso não haja registros após o filtro
 if df_view.empty:
     st.info("Nenhum lançamento encontrado com os filtros selecionados.")
     st.stop()
@@ -158,15 +161,15 @@ with st.expander("✏️ Editar Lançamento"):
                     tipo_acao=?, consideracoes=?, localizacao=?
                 WHERE id=?
             """, (
-                str(data), 
-                tipo_transacao, 
-                int(quantidade), 
-                validade if validade else None, 
+                str(data),
+                tipo_transacao,
+                int(quantidade),
+                validade if validade else None,
                 lote if lote else None,
-                nota if nota else None, 
-                tipo_acao if tipo_acao else None, 
+                nota if nota else None,
+                tipo_acao if tipo_acao else None,
                 consideracoes if consideracoes else None,
-                localizacao if localizacao else None, 
+                localizacao if localizacao else None,
                 selecionado
             ))
             conn.commit()
@@ -177,8 +180,7 @@ with st.expander("🗑️ Excluir Lançamento"):
     if st.button("Excluir"):
         cursor.execute("DELETE FROM movimentacoes WHERE id=?", (selecionado,))
         conn.commit()
-        st.session_state["_flash_lanc"] = ("success", "Lançamento atualizado com sucesso.")
+        st.session_state["_flash_lanc"] = ("success", "Lançamento excluído com sucesso.")
         st.rerun()
 
 conn.close()
-
