@@ -6,6 +6,12 @@ from datetime import date
 st.set_page_config(page_title="Lançamentos", layout="wide")
 st.title("📜 Lançamentos Realizados")
 
+# Flash (mensagens pós-rerun)
+flash = st.session_state.pop("_flash_lanc", None)
+if flash:
+    level, msg = flash
+    getattr(st, level)(msg)
+
 # Gatekeeper
 user = st.session_state.get('user')
 if not user:
@@ -164,14 +170,15 @@ with st.expander("✏️ Editar Lançamento"):
                 selecionado
             ))
             conn.commit()
-            st.success("Lançamento atualizado com sucesso.")
+            st.session_state["_flash_lanc"] = ("success", "Lançamento atualizado com sucesso.")
             st.rerun()
 
 with st.expander("🗑️ Excluir Lançamento"):
     if st.button("Excluir"):
         cursor.execute("DELETE FROM movimentacoes WHERE id=?", (selecionado,))
         conn.commit()
-        st.success("Lançamento excluído com sucesso.")
+        st.session_state["_flash_lanc"] = ("success", "Lançamento atualizado com sucesso.")
         st.rerun()
 
 conn.close()
+
