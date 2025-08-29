@@ -3,11 +3,6 @@ from database import criar_tabelas, obter_usuario, verificar_senha
 
 st.set_page_config(page_title="Controle de Estoque", page_icon="🧪", layout="wide")
 
-with st.sidebar:
-    st.image("assets/logo.png", use_container_width=True)
-    st.write("")  # pequeno espaçamento
-
-
 st.title("🧪 Controle de Estoque de Farmácia")
 st.markdown("""
 Este aplicativo permite gerenciar entradas, saídas e controle de produtos de forma local.
@@ -17,6 +12,9 @@ Perfis:
 - **Gestor**: acesso total (inclui Gestão de Acessos).
 - **Visualizador**: apenas **Visão Geral**.
 """)
+with st.sidebar:
+    st.image("assets/logo.png", use_container_width=True)
+    st.write("")  # pequeno espaçamento
 
 # Garante que todas as tabelas existam (inclui users e admin/admin)
 criar_tabelas()
@@ -41,6 +39,7 @@ with st.sidebar:
         if st.button("Sair", use_container_width=True):
             st.session_state.pop('user', None)
             st.rerun()
+
 
 
 
