@@ -13,7 +13,7 @@ Perfis:
 - **Visualizador**: apenas **Visão Geral**.
 """)
 with st.sidebar:
-    st.image("assets/logo.png", use_container_width=True)
+    st.image("logo.png", use_container_width=True)
     st.write("")  # pequeno espaçamento
 
 # Garante que todas as tabelas existam (inclui users e admin/admin)
@@ -39,6 +39,7 @@ with st.sidebar:
         if st.button("Sair", use_container_width=True):
             st.session_state.pop('user', None)
             st.rerun()
+
 
 
 
