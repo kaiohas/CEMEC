@@ -6,6 +6,12 @@ from database import conectar
 st.set_page_config(page_title="Movimentações", layout="wide")
 st.title("📝 Registro de Movimentações")
 
+# Flash (mensagens pós-rerun)
+flash = st.session_state.pop("_flash_mov", None)
+if flash:
+    level, msg = flash  # ex.: ("success", "Movimentação registrada com sucesso!")
+    getattr(st, level)(msg)
+
 # Gatekeeper: apenas gestor
 user = st.session_state.get('user')
 if not user:
@@ -169,7 +175,8 @@ if st.button("Salvar Movimentação", type="primary"):
         )
     )
     conn.commit()
-    st.success("Movimentação registrada com sucesso!")
+    st.session_state["_flash_mov"] = ("success", "Movimentação registrada com sucesso!")
     st.rerun()
 
 conn.close()
+
