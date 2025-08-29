@@ -8,7 +8,7 @@ st.markdown("""
 Este aplicativo permite gerenciar entradas, saídas e controle de produtos de forma local.
 
 with st.sidebar:
-    st.image("logo.png", use_container_width=True)
+    st.image("assets/logo.png", use_container_width=True)
     st.write("")  # pequeno espaçamento
 
 Perfis:
@@ -39,5 +39,6 @@ with st.sidebar:
         if st.button("Sair", use_container_width=True):
             st.session_state.pop('user', None)
             st.rerun()
+
 
 
