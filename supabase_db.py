@@ -15,8 +15,9 @@ load_dotenv()
 # tanto localmente (via secrets.toml) quanto na nuvem.
 @st.cache_resource
 def init_connection():
-    url = st.secrets["SUPABASE_URL"]
-    key = st.secrets["SUPABASE_KEY"]
+    # Lê as variáveis de ambiente diretamente do Render
+    url = os.environ.get("SUPABASE_URL")
+    key = os.environ.get("SUPABASE_KEY")
     return create_client(url, key)
 
 supabase: Client = init_connection()
@@ -86,4 +87,5 @@ def update_data(table_name, data, eq_col, eq_val):
 
 def delete_data(table_name, eq_col, eq_val):
     response = supabase.table(table_name).delete().eq(eq_col, eq_val).execute()
+
     return response.data
