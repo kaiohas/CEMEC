@@ -1,6 +1,8 @@
 import streamlit as st
 import pandas as pd
-from database import conectar  # usa a conexão centralizada
+import time
+# Importa as novas funções do database.py
+from database import get_data, insert_data, delete_data
 
 st.set_page_config(page_title="Cadastro de Variáveis", layout="wide")
 st.title("🗂️ Cadastro de Variáveis")
@@ -14,8 +16,7 @@ if user['role'] != 'gestor':
     st.error("Acesso restrito a gestores.")
     st.stop()
 
-conn = conectar()
-cursor = conn.cursor()
+# Não precisamos mais de 'conn' e 'cursor' do SQLite.
 
 tabela_por_tipo = {
     "Localização": "localizacao",
@@ -37,10 +38,11 @@ if st.button("Adicionar", type="primary"):
     else:
         tabela = tabela_por_tipo[tipo]
         try:
-            cursor.execute(f"INSERT INTO {tabela} (nome) VALUES (?)", (valor.strip(),))
-            conn.commit()
-            st.toast(f"{tipo} adicionado com sucesso!", icon="✅")
-            st.rerun()  # <-- substitui experimental_rerun
+            # Substitui a chamada cursor.execute() por insert_data()
+            insert_data(tabela, {"nome": valor.strip()})
+            st.success(f"{tipo} adicionado com sucesso!", icon="✅")
+            time.sleep(1.5)
+            st.rerun()
         except Exception as e:
             st.error(f"Erro ao adicionar: {e}")
 
@@ -49,24 +51,28 @@ st.divider()
 st.subheader(f"{tipo}s Cadastrados")
 tabela = tabela_por_tipo[tipo]
 try:
-    df = pd.read_sql(f"SELECT * FROM {tabela} ORDER BY nome", conn)
-    st.dataframe(df, use_container_width=True)
+    # Substitui pd.read_sql() por get_data()
+    df = pd.DataFrame(get_data(tabela, "id, nome"))
+    
+    if not df.empty:
+        df = df.sort_values(by='id')
+
+    st.dataframe(df, width='stretch', hide_index=True)
 
     if not df.empty:
         st.markdown("### Excluir item")
-        col1, col2 = st.columns([2, 1])
-        with col1:
-            id_excluir = st.selectbox("Selecione o ID para excluir", df["id"].tolist())
-        with col2:
-            if st.button("Excluir", type="secondary"):
-                try:
-                    cursor.execute(f"DELETE FROM {tabela} WHERE id = ?", (int(id_excluir),))
-                    conn.commit()
-                    st.toast("Excluído com sucesso.", icon="🗑️")
-                    st.rerun()  # <-- substitui experimental_rerun
-                except Exception as e:
-                    st.error(f"Erro ao excluir: {e}")
+        # col1, col2 = st.columns([2, 1])
+        # with col1:
+        id_excluir = st.selectbox("Selecione o ID para excluir", df["id"].tolist())
+        # with col2:
+        if st.button("Excluir", type="secondary"):
+            try:
+                # Substitui a chamada cursor.execute() por delete_data()
+                delete_data(tabela, "id", int(id_excluir))
+                st.success("Excluído com sucesso.", icon="🗑️")
+                time.sleep(1.5)
+                st.rerun()
+            except Exception as e:
+                st.error(f"Erro ao excluir: {e}")
 except Exception as e:
     st.error(f"Erro ao carregar dados: {e}")
-
-conn.close()

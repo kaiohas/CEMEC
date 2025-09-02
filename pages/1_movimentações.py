@@ -1,16 +1,11 @@
 import streamlit as st
 import pandas as pd
 from datetime import date
-from database import conectar
+from database import conectar, get_data, insert_data, obter_saldo
+import time
 
 st.set_page_config(page_title="Movimentações", layout="wide")
 st.title("📝 Registro de Movimentações")
-
-# Flash (mensagens pós-rerun)
-flash = st.session_state.pop("_flash_mov", None)
-if flash:
-    level, msg = flash  # ex.: ("success", "Movimentação registrada com sucesso!")
-    getattr(st, level)(msg)
 
 # Gatekeeper: apenas gestor
 user = st.session_state.get('user')
@@ -19,55 +14,16 @@ if not user:
 if user['role'] != 'gestor':
     st.error("Acesso restrito a gestores."); st.stop()
 
-conn = conectar()
-cursor = conn.cursor()
-
-# ---------------------------
-# Helpers
-# ---------------------------
-def obter_saldo(conn, estudo_id, produto_id, validade, lote):
-    """
-    Retorna o saldo atual (Entradas - Saídas) para a combinação
-    Estudo + Produto + Validade + Lote.
-    """
-    params = {"estudo_id": estudo_id, "produto_id": produto_id}
-    cond = ["m.estudo_id = :estudo_id", "m.produto_id = :produto_id"]
-
-    # Filtro por validade (NULL vs valor)
-    if validade:
-        cond.append("m.validade = :validade")
-        params["validade"] = str(validade)
-    else:
-        cond.append("m.validade IS NULL")
-
-    # Filtro por lote (NULL vs valor)
-    if lote:
-        cond.append("m.lote = :lote")
-        params["lote"] = lote
-    else:
-        cond.append("m.lote IS NULL")
-
-    sql = f"""
-        SELECT
-            COALESCE(SUM(CASE WHEN m.tipo_transacao = 'Entrada' THEN m.quantidade ELSE 0 END), 0)
-          - COALESCE(SUM(CASE WHEN m.tipo_transacao = 'Saída'   THEN m.quantidade ELSE 0 END), 0)
-        AS saldo
-        FROM movimentacoes m
-        WHERE {" AND ".join(cond)}
-    """
-    df_s = pd.read_sql(sql, conn, params=params)
-    try:
-        return int(df_s.iloc[0, 0]) if not df_s.empty else 0
-    except Exception:
-        return 0
+# Não precisamos mais do objeto 'conn' ou 'cursor' do SQLite.
 
 # ---------------------------
 # Carregar dimensões
 # ---------------------------
-estudos = pd.read_sql("SELECT id, nome FROM estudos ORDER BY nome", conn)
-produtos = pd.read_sql("SELECT id, nome, estudo_id, tipo_produto FROM produtos ORDER BY nome", conn)
-localizacoes = pd.read_sql("SELECT nome FROM localizacao ORDER BY nome", conn)
-tipos_acao = pd.read_sql("SELECT nome FROM tipo_acao ORDER BY nome", conn)
+# Substitui pd.read_sql por get_data
+estudos = pd.DataFrame(get_data("estudos", "id, nome"))
+produtos = pd.DataFrame(get_data("produtos", "id, nome, estudo_id, tipo_produto"))
+localizacoes = pd.DataFrame(get_data("localizacao", "nome"))
+tipos_acao = pd.DataFrame(get_data("tipo_acao", "nome"))
 
 # ---------------------------
 # Formulário
@@ -79,7 +35,6 @@ with col1:
     estudo_id = int(estudos.loc[estudos['nome'] == estudo, 'id'].values[0]) if not estudos.empty and estudo else None
 
 with col2:
-    # Data travada no dia atual
     data_acao = date.today()
     st.info(f"Data da Ação: **{data_acao.isoformat()}**")
     quantidade = st.number_input("Quantidade", min_value=1, step=1)
@@ -99,14 +54,8 @@ if tipo_transacao == 'Entrada':
     lote = st.text_input("Lote")
 else:
     # Para saída, puxamos as opções já existentes para este estudo+produto
-    base_movs = pd.read_sql(
-        """
-        SELECT validade, lote
-        FROM movimentacoes
-        WHERE estudo_id = ? AND produto_id = ?
-        """,
-        conn, params=(estudo_id if estudo_id else -1, produto_id if produto_id else -1)
-    )
+    # Substitui pd.read_sql
+    base_movs = pd.DataFrame(get_data("movimentacoes", "validade, lote"))
 
     op_validade = (
         pd.to_datetime(base_movs['validade'], errors='coerce').dt.date.dropna().drop_duplicates().sort_values()
@@ -117,7 +66,6 @@ else:
         if not base_movs.empty else pd.Series([], dtype="object")
     )
 
-    # Observação: permitir também Saída de itens sem validade/lote (pode existir)
     validade = st.selectbox("Validade", [None] + op_validade.astype(object).tolist())
     lote = st.selectbox("Lote", [None] + op_lote.astype(str).tolist())
 
@@ -126,7 +74,6 @@ tipo_acao_sel = st.selectbox("Tipo de Ação", tipos_acao['nome'] if not tipos_a
 consideracoes = st.text_area("Considerações")
 localizacao = st.selectbox("Localização", localizacoes['nome'] if not localizacoes.empty else [])
 
-# Responsável amarrado ao usuário logado
 responsavel = user['username']
 st.caption(f"Responsável: **{responsavel}**")
 
@@ -134,18 +81,14 @@ st.caption(f"Responsável: **{responsavel}**")
 # Salvar
 # ---------------------------
 if st.button("Salvar Movimentação", type="primary"):
-    # Valida seleção mínima
     if not (estudo_id and produto_id):
         st.error("Selecione **Estudo** e **Produto**.")
         st.stop()
 
-    # Regras de validação para Saída: não permitir saldo negativo
     if tipo_transacao == 'Saída':
-        # Para cálculo do saldo, consideramos a mesma chave (estudo+produto+validade+lote)
-        saldo_atual = obter_saldo(conn, estudo_id, produto_id, validade, lote)
+        saldo_atual = obter_saldo(estudo_id, produto_id, validade, lote)
 
         if quantidade > saldo_atual:
-            # Mensagem amigável com o saldo atual
             chave_validade = validade.isoformat() if hasattr(validade, "isoformat") else ("—" if validade is None else str(validade))
             chave_lote = lote if lote else "—"
             st.error(
@@ -156,27 +99,21 @@ if st.button("Salvar Movimentação", type="primary"):
             st.stop()
 
     # Tudo ok, inserir
-    cursor.execute(
-        """
-        INSERT INTO movimentacoes 
-        (data, tipo_transacao, estudo_id, produto_id, tipo_produto, quantidade, validade, lote, nota, tipo_acao, consideracoes, responsavel, localizacao)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        """,
-        (
-            str(data_acao), tipo_transacao, estudo_id, produto_id, tipo_produto,
-            int(quantidade),
-            str(validade) if validade else None,
-            lote if lote else None,
-            nota if nota else None,
-            tipo_acao_sel if tipo_acao_sel else None,
-            consideracoes if consideracoes else None,
-            responsavel,
-            localizacao if localizacao else None
-        )
-    )
-    conn.commit()
-    st.session_state["_flash_mov"] = ("success", "Movimentação registrada com sucesso!")
+    insert_data("movimentacoes", {
+        "data": str(data_acao),
+        "tipo_transacao": tipo_transacao,
+        "estudo_id": estudo_id,
+        "produto_id": produto_id,
+        "tipo_produto": tipo_produto,
+        "quantidade": int(quantidade),
+        "validade": str(validade) if validade else None,
+        "lote": lote if lote else None,
+        "nota": nota if nota else None,
+        "tipo_acao": tipo_acao_sel if tipo_acao_sel else None,
+        "consideracoes": consideracoes if consideracoes else None,
+        "responsavel": responsavel,
+        "localizacao": localizacao if localizacao else None
+    })
+    st.success("Movimentação registrada com sucesso!")
+    time.sleep(1.5)
     st.rerun()
-
-conn.close()
-

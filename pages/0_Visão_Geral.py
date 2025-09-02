@@ -1,8 +1,8 @@
 import streamlit as st
 import pandas as pd
-from database import conectar
 from datetime import datetime, date
 import numpy as np
+from database import get_data
 
 st.set_page_config(page_title="Visão Geral do Estoque", layout="wide")
 st.title("📊 Visão Geral do Estoque")
@@ -12,44 +12,51 @@ user = st.session_state.get('user')
 if not user:
     st.error("Faça login para continuar."); st.stop()
 
-conn = conectar()
+# --- Carregar dados do Supabase e fazer as junções com Pandas ---
+try:
+    df_movs = pd.DataFrame(get_data("movimentacoes", "*"))
+    
+    if df_movs.empty:
+        st.warning("Nenhuma movimentação registrada.")
+        st.stop()
 
-# Carregar dados
-query = """
-SELECT 
-    m.id, m.data, m.tipo_transacao, e.nome AS estudo, p.nome AS produto, 
-    m.tipo_produto, m.quantidade, m.validade, m.lote
-FROM movimentacoes m
-LEFT JOIN estudos e ON m.estudo_id = e.id
-LEFT JOIN produtos p ON m.produto_id = p.id
-"""
-df = pd.read_sql(query, conn)
+    df_estudos = pd.DataFrame(get_data("estudos", "id, nome"))
+    df_produtos = pd.DataFrame(get_data("produtos", "id, nome"))
 
-if df.empty:
-    st.warning("Nenhuma movimentação registrada.")
-    st.stop()
+    df_movs = pd.merge(df_movs, df_estudos, left_on='estudo_id', right_on='id', how='left', suffixes=('', '_est'))
+    df_movs.rename(columns={'nome': 'estudo'}, inplace=True)
+    df_movs = pd.merge(df_movs, df_produtos, left_on='produto_id', right_on='id', how='left', suffixes=('', '_prod'))
+    df_movs.rename(columns={'nome': 'produto'}, inplace=True)
+    
+    # --- CORREÇÃO AQUI ---
+    # Substitui os valores nulos por uma string vazia para o agrupamento funcionar
+    df = df_movs[['id', 'data', 'tipo_transacao', 'estudo', 'produto', 'tipo_produto', 'quantidade', 'validade', 'lote']]
+    df = df.fillna('')
+    # Fim da correção
+    
 
-# Função para farol
+except Exception as e:
+    st.error(f"Erro ao carregar dados: {e}"); st.stop()
+
 def farol(validade):
-    if validade in ["", "N/A", None]:
+    if pd.isna(validade) or validade == "" or validade == "N/A":
         return ""
     try:
         validade_date = datetime.strptime(validade, "%Y-%m-%d").date()
         dias = (validade_date - date.today()).days
         if dias < 0:
-            return "⚫"  # Preto (vencido)
+            return "⚫"
         elif dias < 30:
-            return "🔴"  # Vermelho
+            return "🔴"
         elif dias < 60:
-            return "🟠"  # Laranja
+            return "🟠"
         elif dias < 90:
-            return "🔵"  # Azul
+            return "🔵"
         else:
-            return "🟢"  # Verde
-    except:
+            return "🟢"
+    except (ValueError, TypeError):
         return ""
 
-# Filtros principais
 estudo_filter = st.multiselect("Filtrar por Estudo", sorted(df['estudo'].dropna().unique()))
 produto_filter = st.multiselect("Filtrar por Produto", sorted(df['produto'].dropna().unique()))
 
@@ -58,78 +65,72 @@ if estudo_filter:
 if produto_filter:
     df = df[df['produto'].isin(produto_filter)]
 
-# --- Filtro por Validade (robusto para Cloud) ---
-# Mantém uma coluna datetime64 para min/max e comparação
-df["validade_dt"] = pd.to_datetime(df["validade"], errors="coerce")
+col_chk, col_dt = st.columns([1, 2])
+with col_chk:
+    considerar_validade = st.checkbox("Considerar data de validade", value=False)
 
-# Intervalo padrão
-min_valid = df["validade_dt"].min(skipna=True)
-max_valid = df["validade_dt"].max(skipna=True)
-if pd.isna(min_valid) or pd.isna(max_valid):
-    default_range = (date.today(), date.today())
-else:
-    default_range = (min_valid.date(), max_valid.date())
+if considerar_validade:
+    df["validade_dt"] = pd.to_datetime(df["validade"], errors="coerce")
+    min_valid = df["validade_dt"].min(skipna=True)
+    max_valid = df["validade_dt"].max(skipna=True)
+    
+    if pd.isna(min_valid) or pd.isna(max_valid):
+        default_range = (date.today(), date.today())
+    else:
+        default_range = (min_valid.date(), max_valid.date())
 
-cval1, cval2 = st.columns([2, 1])
-with cval1:
-    intervalo_validade = st.date_input(
-        "Filtrar por Validade (intervalo)",
-        value=default_range,
-        help="Selecione início e fim do intervalo de validade."
-    )
-with cval2:
-    incluir_sem_validade = st.checkbox("Incluir itens sem validade", value=True)
+    with col_dt:
+        intervalo_validade = st.date_input("Intervalo de Validade", value=default_range, help="Selecione início e fim do intervalo de validade.")
 
-# Normaliza retorno do date_input
-if isinstance(intervalo_validade, (list, tuple)) and len(intervalo_validade) == 2:
-    dt_ini, dt_fim = intervalo_validade
-else:
-    dt_ini = dt_fim = intervalo_validade
+    if isinstance(intervalo_validade, (list, tuple)) and len(intervalo_validade) == 2:
+        dt_ini, dt_fim = intervalo_validade
+    else:
+        dt_ini = dt_fim = intervalo_validade
+    
+    dt_ini = pd.to_datetime(dt_ini) if dt_ini else None
+    dt_fim = pd.to_datetime(dt_fim) if dt_fim else None
 
-dt_ini = pd.to_datetime(dt_ini) if dt_ini else None
-dt_fim = pd.to_datetime(dt_fim) if dt_fim else None
+    if dt_ini is not None and dt_fim is not None:
+        df = df[df["validade_dt"].between(dt_ini, dt_fim, inclusive="both")].copy()
 
-# Aplica filtro de validade
-mask_valid = pd.Series(False, index=df.index)
-if dt_ini is not None and dt_fim is not None:
-    mask_valid |= df["validade_dt"].between(dt_ini, dt_fim, inclusive="both")
-if incluir_sem_validade:
-    mask_valid |= df["validade_dt"].isna()
+df['Entradas'] = df.apply(lambda row: row['quantidade'] if row['tipo_transacao'] == 'Entrada' else 0, axis=1)
+df['Saidas'] = df.apply(lambda row: row['quantidade'] if row['tipo_transacao'] == 'Saída' else 0, axis=1)
 
-df = df[mask_valid].copy()
+agrupado = df.groupby(['estudo', 'produto', 'validade', 'lote']).agg(
+    Entradas=('Entradas', 'sum'),
+    Saidas=('Saidas', 'sum')
+).reset_index()
 
-# Agrupar (saldo por Estudo/Produto/Validade/Lote)
-agrupado = df.groupby(['estudo', 'produto', 'validade', 'lote']).agg({
-    'quantidade': lambda x: x[df.loc[x.index, 'tipo_transacao'] == 'Entrada'].sum()
-                            - x[df.loc[x.index, 'tipo_transacao'] == 'Saída'].sum()
-}).reset_index()
+agrupado['Saldo Total'] = agrupado['Entradas'] - agrupado['Saidas']
 
-agrupado.rename(columns={'quantidade': 'Saldo Total'}, inplace=True)
-
-# Farol com base na string de validade (df['validade'])
 agrupado['Farol'] = agrupado['validade'].apply(farol)
+agrupado = agrupado.sort_values(by=['estudo', 'produto', 'validade', 'lote'], na_position="last")
+agrupado.fillna(0, inplace=True)
+agrupado['Entradas'] = agrupado['Entradas'].astype(int)
+agrupado['Saidas'] = agrupado['Saidas'].astype(int)
+agrupado['Saldo Total'] = agrupado['Saldo Total'].astype(int)
 
-# Entradas e Saídas separadas (para referência)
-df_entrada = (
-    df[df['tipo_transacao'] == 'Entrada']
-    .groupby(['estudo', 'produto', 'validade', 'lote'])['quantidade']
-    .sum().reset_index().rename(columns={'quantidade': 'Entradas'})
-)
-df_saida = (
-    df[df['tipo_transacao'] == 'Saída']
-    .groupby(['estudo', 'produto', 'validade', 'lote'])['quantidade']
-    .sum().reset_index().rename(columns={'quantidade': 'Saídas'})
-)
+if not agrupado.empty:
+    st.dataframe(agrupado[['Farol', 'estudo', 'produto', 'validade', 'lote', 'Entradas', 'Saidas', 'Saldo Total']], width='stretch', hide_index=True,
+                column_config={
+        "Farol": st.column_config.Column(width="tiny"),
+        "estudo": st.column_config.Column(width="small"),
+        "produto": st.column_config.Column(width="medium"),
+        "validade": st.column_config.Column(width="small"),
+        "lote": st.column_config.Column(width="small"),
+        "Entradas": st.column_config.Column(width="small"),
+        "Saidas": st.column_config.Column(width="small"),
+        "Saldo Total": st.column_config.Column(width="small")
+    })
 
-resultado = pd.merge(agrupado, df_entrada, on=['estudo','produto','validade','lote'], how='left')
-resultado = pd.merge(resultado, df_saida, on=['estudo','produto','validade','lote'], how='left')
-
-resultado['Entradas'] = resultado['Entradas'].fillna(0).astype(int)
-resultado['Saídas']   = resultado['Saídas'].fillna(0).astype(int)
-
-# Ordenar
-resultado = resultado.sort_values(by=['estudo', 'produto', 'validade', 'lote'], na_position="last")
-
-st.dataframe(resultado, use_container_width=True)
-
-conn.close()
+    st.divider()
+    st.subheader("Métricas Gerais")
+    c1, c2, c3 = st.columns(3)
+    with c1:
+        st.metric("Total de Entradas", f"{agrupado['Entradas'].sum():.0f}")
+    with c2:
+        st.metric("Total de Saídas", f"{agrupado['Saidas'].sum():.0f}")
+    with c3:
+        st.metric("Saldo Geral", f"{agrupado['Saldo Total'].sum():.0f}")
+else:
+    st.info("Nenhum item para exibir com os filtros atuais.")
