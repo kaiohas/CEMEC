@@ -2,17 +2,9 @@
 import hashlib
 import streamlit as st
 from supabase import create_client, Client
-from dotenv import load_dotenv
-import os
-
-# Carrega as variáveis de ambiente do arquivo .env
-# Isso é para o desenvolvimento local, para não expor as chaves.
-# No Hugging Face Spaces, as chaves serão carregadas como secrets.
-load_dotenv()
+import os # Importa a biblioteca os
 
 # --- Configuração da Conexão com o Supabase ---
-# Usamos st.secrets para carregar as chaves de forma segura,
-# tanto localmente (via secrets.toml) quanto na nuvem.
 @st.cache_resource
 def init_connection():
     # Lê as variáveis de ambiente diretamente do Render
@@ -21,7 +13,6 @@ def init_connection():
     return create_client(url, key)
 
 supabase: Client = init_connection()
-
 # --- Helpers de Autenticação (adaptados) ---
 def _hash_password(password: str) -> str:
     # A função de hash pode ser mantida, mas a do Supabase é mais robusta.
@@ -89,3 +80,4 @@ def delete_data(table_name, eq_col, eq_val):
     response = supabase.table(table_name).delete().eq(eq_col, eq_val).execute()
 
     return response.data
+
